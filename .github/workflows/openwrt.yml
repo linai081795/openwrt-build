@@ -1,0 +1,168 @@
+name: Lede-linaicode
+on:
+  workflow_dispatch:
+    inputs:
+      REPO_BRANCH:
+        description: '大雕源码'
+        required: true
+        default: 'master'
+        type: choice
+        options:
+          - 'master'
+      CONFIG_FILE:
+        description: '请选择配置文件'
+        required: true
+        default: 'x86_64'
+        type: choice
+        options:
+          - 'x86_64'
+      CPU_SELECTION:
+        description: 'CPU优选,增加编译速度'
+        required: true
+        default: '默认'
+        type: choice
+        options:
+          - '默认'
+          - '8370C'
+          - '8272CL'
+          - '8171M'
+      INFORMATION_NOTICE:
+        description: 'Telegram或pushplus信息通知'
+        required: true
+        default: 'Pushplus'
+        type: choice
+        options:
+          - '关闭'
+          - 'Telegram'
+          - 'Pushplus'
+      SSH_ACTION:
+        description: 'SSH远程配置固件'
+        required: false
+        default: 'false'
+        type: boolean
+      UPLOAD_FIRMWARE:
+        description: '上传固件到 Github Artifacts'
+        required: false
+        default: 'true'
+        type: boolean
+      UPLOAD_RELEASE:
+        description: '发布固件到 Github Releases'
+        required: false
+        default: 'true'
+        type: boolean
+      CACHEWRTBUILD_SWITCH:
+        description: '缓存加速编译'
+        required: false
+        default: 'true'
+        type: boolean
+      UPDATE_FIRMWARE_ONLINE:
+        description: '增加在线更新固件功能/自动打包Amlogic_Rockchip系列固件'
+        required: false
+        default: 'true'
+        type: boolean
+      COMPILATION_INFORMATION:
+        description: '是否显示编译信息'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds_config/lede23.feeds.conf.default
+  CONFIG_FILE: config/lede_config/2305_x64_all.config
+  CONFIGS: config/lede_config
+  DIY_P1_SH: diy_script/lede_diy/x86/2305_x64_all_diy-part1.sh
+  DIY_P2_SH: diy_script/lede_diy/x86/2305_x64_all_diy-part2.sh
+  CLASH_KERNEL: amd64
+  UPLOAD_BIN_DIR: false
+  UPLOAD_CONFIG: true
+  UPLOAD_FIRMWARE: false
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  FILE_NAME: OpenWrt_2305_x64_all
+  PRODUCT_NAME: x86_64
+
+jobs:
+  CheckRepo:
+    runs-on: ubuntu-latest
+    env:
+      REPO_URL_Lede: https://github.com/coolsnowwolf/lede
+      REPO_BRANCH_Lede: master
+      REPO_PATH_Lede : "2410_x64_all"
+    outputs:
+      output: ${{ steps.outputunifreq.outputs.unifreq }}
+    steps:
+    - name: Get Commit Hash
+      id: getHash
+      run: |
+        git clone --depth 1 $REPO_URL_Lede -b $REPO_BRANCH_Lede $REPO_PATH_Lede
+        cd $REPO_PATH_Lede
+        echo "commitHash_2410_x64_all=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+        cd
+
+    - name: Show Commit Head and Combination Heads
+      id: combHeader
+      run: |
+        echo "commitHash_2410_x64_all: ${{ steps.getHash.outputs.commitHash_2410_x64_all }}"
+
+    - name: Compare Commit Hash
+      id: cacheHash
+      uses: actions/cache@main
+      with:
+        path: .commitHash_2410_x64_all
+        key: HEAD-${{ steps.getHash.outputs.commitHash_2410_x64_all }}
+
+    - name: Set output for next job
+      id: outputunifreq
+      if: steps.cacheHash.outputs.cache-hit == 'true'
+      run: |
+        echo "unifreq=hello" >> $GITHUB_OUTPUT
+
+    - name: Save New Commit Hash
+      if: steps.cacheHash.outputs.cache-hit != 'true'
+      run: |
+        echo ${{ steps.getHash.outputs.commitHash_2410_x64_all }} | tee .commitHash_2410_x64_all
+        echo .commitHash_2410_x64_all
+
+  Build:
+    name: 启动"${{ matrix.target }}-${{ github.event.inputs.REPO_BRANCH }}"触发编译
+    needs: [CheckRepo]
+    if: ${{ needs.CheckRepo.outputs.output != 'hello' || github.event.inputs.checkupdates66 == 'true'}}
+    runs-on: ubuntu-22.04
+    env:
+      FOLDER_NAME: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [Lede]
+    steps:
+      - name: 密匙检测（密匙为空则退出）
+        run: |
+          cd ${GITHUB_WORKSPACE}
+          if [[ -z "${{ secrets.REPO_TOKEN }}" ]]; then
+            echo "您没有设置仓库密匙，请按教程设置好密匙再来"
+            echo "REPO_TOKEN密匙制作教程：https://git.io/jm.md"
+            exit 1
+          fi
+      
+      - name: 准备结束
+        uses: actions/checkout@main
+      
+      - name: 检查服务器资源
+        run: |
+          echo "警告⚠"
+          echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          echo -e "已知CPU型号(降序): 7763，8370C，8272CL，8171M，E5-2673 \n"
+          echo -e "-------------- ------------CPU信息------------------------------------------"
+          echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+          echo "CPU线程数量: $(nproc)"
+          echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+          echo "-------------------------------内存信息-------------------------------------------"
+          echo "已安装内存详细信息："
+          echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
+          echo "-----------------------------硬盘信息---------------------------------------------"
+          echo -e  "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)"
+          echo "硬盘详情："
+          echo "系统空间        类型   总数  已用  可用  使用率"
+          df -Th
